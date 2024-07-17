@@ -650,7 +650,7 @@ describe('GDSCode in errors', function () {
 
     before(function (done) {
         var lconfig = Object.assign(config);
-        lconfig.database = path.join(path.dirname(config.database), 'test.fdb');
+        lconfig.database = lconfig.databaseGds || path.join(path.dirname(config.database), 'test.fdb');
         Firebird.attachOrCreate(lconfig, function (err, _db) {
             if (err) throw err;
             db = _db;

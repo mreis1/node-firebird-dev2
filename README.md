@@ -68,7 +68,29 @@ options.pageSize = 4096; // default when creating database
 options.retryConnectionInterval = 1000; // reconnect interval in case of connection drop
 options.blobAsText = false; // set to true to get blob as text, only affects blob subtype 1
 options.encoding = 'UTF8'; // default encoding for connection is UTF-8
+options.charset = 'utf8'; // local transliteration for text 
 ```
+
+#### Options for WIN1252  
+```js
+var options = {};
+var iconv = require('iconv-lite');
+
+options.host = '127.0.0.1';
+// ...above options 
+
+// + CHARSET SETTINGS 
+options.encoding = 'WIN1252' /* or  'ISO8859_1'*/ ; // default encoding for connection is UTF-8
+// Similar to buffer.write() and buffer.read(), hooks must be executed syncrounously
+// async  decoding/encoding is not yet supported
+// in the example below, we're using iconv-lite 
+options.charset = 'latin1';
+options.charsetHooks = {  
+    decode: (data/*Buffer*/) => iconv.decode(data, 'win-1252'), 
+    encode: (data/*string | Buffer*/) => iconv.encode(data, 'win-1252')
+}
+```
+
 
 ### Classic
 
