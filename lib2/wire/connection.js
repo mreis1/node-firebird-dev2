@@ -15,7 +15,6 @@ const Database = require('./database');
 const Statement = require('./statement');
 const Transaction = require('./transaction');
 const {lookupMessages, noop, parseDate} = require('../utils');
-const {SQLVarText} = require("./xsqlvar");
 
 /***************************************
  *
@@ -48,12 +47,6 @@ var Connection = function (host, port, callback, options, db, svc) {
     this._max_cached_query = options.maxCachedQuery || -1;
     this._cache_query = options.cacheQuery?{}:null;
     this._messageFile = options.messageFile || path.join(__dirname, 'firebird.msg');
-    this._charset = options.charset || Const.DEFAULT_ENCODING
-    this._charsetHooks = options.charsetHoosk || {};
-    this._charsetHooks.text = this._charsetHooks.text || {
-        encode: null,
-        decode: null
-    }
 };
 
 Connection.prototype._setcachedquery = function (query, statement) {
@@ -153,7 +146,7 @@ Connection.prototype._bind_events = function(host, port, callback) {
         while (xdr.pos < xdr.buffer.length) {
             var cb = self._queue[0], pos = xdr.pos;
 
-            decodeResponse(xdr, cb, self, function (err, obj) {
+            decodeResponse(xdr, cb, self, self._lowercase_keys, function (err, obj) {
 
                 if (err) {
                     xdr.buffer = xdr.buffer.slice(pos);
@@ -206,12 +199,8 @@ Connection.prototype.disconnect = function() {
 };
 
 
-function decodeResponse(data, callback, cnx, cb) {
+function decodeResponse(data, callback, cnx, lowercase_keys, cb) {
     try {
-        const charset = cnx._charset;
-        const charsetHooks = cnx._charsetHooks;
-        const lowercase_keys = cnx._lowercase_keys;
-
         do {
             var r = data.r || data.readInt();
         } while (r === Const.op_dummy);
@@ -235,7 +224,7 @@ function decodeResponse(data, callback, cnx, cb) {
                             callback.lazy_count--;
                             if (callback.lazy_count > 0) {
                                 r = data.readInt(); // Read new op
-                                parseOpResponse(cnx, data, response, loop);
+                                parseOpResponse(data, response, loop);
                             } else {
                                 cb(null, response);
                             }
@@ -245,7 +234,7 @@ function decodeResponse(data, callback, cnx, cb) {
                     }
                 };
                 // Parse normal and lazy response
-                return parseOpResponse(cnx, data, response, loop);
+                return parseOpResponse(data, response, loop);
             case Const.op_fetch_response:
             case Const.op_sql_response:
                 var statement = callback.statement;
@@ -260,7 +249,7 @@ function decodeResponse(data, callback, cnx, cb) {
                     op = data.readInt(); // ??
                     data.fop = false;
                     if (op === Const.op_response) {
-                        return parseOpResponse(cnx, data, {}, cb);
+                        return parseOpResponse(data, {}, cb);
                     }
                 }
 
@@ -310,15 +299,7 @@ function decodeResponse(data, callback, cnx, cb) {
                             _xdrpos = data.pos;
                             const key = custom.asObject ? data.fcols[data.fcolumn] : data.fcolumn;
                             const row = data.frows.length;
-                            let value;
-                            if (item instanceof SQLVarText) { // that's the only instance in which decode method offers an `opts` argument
-                                value = item.decode(data, lowerV13, {
-                                    charset,
-                                    charsetHooks
-                                });
-                            } else {
-                                value = item.decode(data, lowerV13);
-                            }
+                            let value = item.decode(data, lowerV13);
 
                             if (item.type === Const.SQL_BLOB && value !== null) {
                                 if (item.subType === Const.isc_blob_text && cnx.options.blobAsText) {
@@ -354,7 +335,7 @@ function decodeResponse(data, callback, cnx, cb) {
                             delete data.fcount;
                             op = data.readInt(); // ??
                             if (op === Const.op_response) {
-                                return parseOpResponse(cnx, data, {}, cb);
+                                return parseOpResponse(data, {}, cb);
                             }
                             data.fstatus = data.readInt();
                             data.fcount = data.readInt();
@@ -363,7 +344,7 @@ function decodeResponse(data, callback, cnx, cb) {
                             if (r === Const.op_sql_response) {
                                 op = data.readInt();
                                 if (op === Const.op_response) {
-                                    parseOpResponse(cnx, data, {});
+                                    parseOpResponse(data, {});
                                 }
                             }
                         }
@@ -400,9 +381,9 @@ function decodeResponse(data, callback, cnx, cb) {
 
                 if (r === Const.op_cond_accept || r === Const.op_accept_data) {
                     var d = new BlrReader(data.readArray());
-                    accept.pluginName = data.readString(charset);
+                    accept.pluginName = data.readString(Const.DEFAULT_ENCODING);
                     var is_authenticated = data.readInt();
-                    var keys = data.readString(charset); // keys
+                    var keys = data.readString(Const.DEFAULT_ENCODING); // keys
 
                     if (is_authenticated === 0) {
                         if (cnx.options.pluginName && cnx.options.pluginName !== accept.pluginName) {
@@ -472,9 +453,9 @@ function decodeResponse(data, callback, cnx, cb) {
                 return cb(undefined, accept);
             case Const.op_cont_auth:
                 var d = new BlrReader(data.readArray());
-                var pluginName = data.readString(charset);
-                data.readString(charset); // plist
-                data.readString(charset); // pkey
+                var pluginName = data.readString(Const.DEFAULT_ENCODING);
+                data.readString(Const.DEFAULT_ENCODING); // plist
+                data.readString(Const.DEFAULT_ENCODING); // pkey
 
                 if (!cnx.options.pluginName) {
                     if (cnx.accept.pluginName === pluginName) {
@@ -488,7 +469,7 @@ function decodeResponse(data, callback, cnx, cb) {
 
                         cnx.sendOpContAuth(
                             cnx.accept.authData,
-                            charset,
+                            Const.DEFAULT_ENCODING,
                             pluginName
                         );
 
@@ -508,15 +489,7 @@ function decodeResponse(data, callback, cnx, cb) {
     }
 }
 
-/**
- *
- * @param cnx   {Connection}
- * @param data
- * @param response
- * @param cb
- * @returns {*}
- */
-function parseOpResponse(cnx, data, response, cb) {
+function parseOpResponse(data, response, cb) {
     var handle = data.readInt();
 
     if (!response.handle) {
@@ -559,10 +532,10 @@ function parseOpResponse(cnx, data, response, cb) {
             case Const.isc_arg_interpreted:
             case Const.isc_arg_sql_state:
                 if (item.params) {
-                    var str = data.readString(cnx._charset);
+                    var str = data.readString(Const.DEFAULT_ENCODING);
                     item.params.push(str);
                 } else {
-                    item.params = [data.readString(cnx._charset)];
+                    item.params = [data.readString(Const.DEFAULT_ENCODING)];
                 }
 
                 break;
@@ -596,8 +569,8 @@ Connection.prototype.sendOpContAuth = function(authData, authDataEnc, pluginName
 
     msg.addInt(Const.op_cont_auth);
     msg.addString(authData, authDataEnc);
-    msg.addString(pluginName, this._charset)
-    msg.addString(Const.AUTH_PLUGIN_LIST.join(','), this._charset);
+    msg.addString(pluginName, Const.DEFAULT_ENCODING)
+    msg.addString(Const.AUTH_PLUGIN_LIST.join(','), Const.DEFAULT_ENCODING);
     // msg.addInt(0); // p_list
     msg.addInt(0); // keys
 
@@ -627,32 +600,32 @@ Connection.prototype.connect = function (options, callback) {
     msg.pos = 0;
     blr.pos = 0;
 
-    blr.addString(Const.CNCT_login, options.user, this._charset);
-    blr.addString(Const.CNCT_plugin_name, pluginName, this._charset);
-    blr.addString(Const.CNCT_plugin_list, Const.AUTH_PLUGIN_LIST.join(','), this._charset);
+    blr.addString(Const.CNCT_login, options.user, Const.DEFAULT_ENCODING);
+    blr.addString(Const.CNCT_plugin_name, pluginName, Const.DEFAULT_ENCODING);
+    blr.addString(Const.CNCT_plugin_list, Const.AUTH_PLUGIN_LIST.join(','), Const.DEFAULT_ENCODING);
 
     var specificData = '';
     if (Const.AUTH_PLUGIN_SRP_LIST.indexOf(pluginName) > -1) {
         this.clientKeys = srp.clientSeed();
         specificData = this.clientKeys.public.toString(16);
-        blr.addMultiblockPart(Const.CNCT_specific_data, specificData, this._charset);
+        blr.addMultiblockPart(Const.CNCT_specific_data, specificData, Const.DEFAULT_ENCODING);
     } else if (pluginName === Const.AUTH_PLUGIN_LEGACY) {
         specificData = crypt.crypt(options.password, Const.LEGACY_AUTH_SALT).substring(2);
-        blr.addMultiblockPart(Const.CNCT_specific_data, specificData, this._charset);
+        blr.addMultiblockPart(Const.CNCT_specific_data, specificData, Const.DEFAULT_ENCODING);
     } else {
         doError(new Error('Invalide auth plugin \'' + pluginName + '\''), callback);
         return;
     }
     blr.addBytes([Const.CNCT_client_crypt, 4, Const.WIRE_CRYPT_DISABLE, 0, 0, 0]); // WireCrypt = Disabled
-    blr.addString(Const.CNCT_user, os.userInfo().username || 'Unknown', this._charset);
-    blr.addString(Const.CNCT_host, os.hostname(), this._charset);
+    blr.addString(Const.CNCT_user, os.userInfo().username || 'Unknown', Const.DEFAULT_ENCODING);
+    blr.addString(Const.CNCT_host, os.hostname(), Const.DEFAULT_ENCODING);
     blr.addBytes([Const.CNCT_user_verification, 0]);
 
     msg.addInt(Const.op_connect);
     msg.addInt(Const.op_attach);
     msg.addInt(Const.CONNECT_VERSION3);
     msg.addInt(Const.ARCHITECTURE_GENERIC);
-    msg.addString(options.database || options.filename, this._charset);
+    msg.addString(options.database || options.filename, Const.DEFAULT_ENCODING);
     msg.addInt(Const.SUPPORTED_PROTOCOL.length);  // Count of Protocol version understood count.
     msg.addBlr(this._blr);
 
@@ -698,34 +671,34 @@ Connection.prototype.attach = function (options, callback, db) {
     blr.pos = 0;
 
     blr.addByte(Const.isc_dpb_version1);
-    blr.addString(Const.isc_dpb_lc_ctype, options.encoding || 'UTF8', this._charset);
-    blr.addString(Const.isc_dpb_user_name, user, this._charset);
+    blr.addString(Const.isc_dpb_lc_ctype, options.encoding || 'UTF8', Const.DEFAULT_ENCODING);
+    blr.addString(Const.isc_dpb_user_name, user, Const.DEFAULT_ENCODING);
     if (options.password && !this.accept.authData) {
         if (this.accept.protocolVersion < Const.PROTOCOL_VERSION13) {
             if (this.accept.protocolVersion === Const.PROTOCOL_VERSION10) {
-                blr.addString(Const.isc_dpb_password, password, this._charset);
+                blr.addString(Const.isc_dpb_password, password, Const.DEFAULT_ENCODING);
             } else {
-                blr.addString(Const.isc_dpb_password_enc, crypt.crypt(password, Const.LEGACY_AUTH_SALT).substring(2), this._charset);
+                blr.addString(Const.isc_dpb_password_enc, crypt.crypt(password, Const.LEGACY_AUTH_SALT).substring(2), Const.DEFAULT_ENCODING);
             }
         }
     }
 
     if (role)
-        blr.addString(Const.isc_dpb_sql_role_name, role, this._charset);
+        blr.addString(Const.isc_dpb_sql_role_name, role, Const.DEFAULT_ENCODING);
 
     blr.addBytes([Const.isc_dpb_process_id, 4]);
     blr.addInt32(process.pid);
 
     let processName  = process.title || "";
-    blr.addString(Const.isc_dpb_process_name, processName.length > 255 ? processName.substring(processName.length - 255,  processName.length) : processName, this._charset);
+    blr.addString(Const.isc_dpb_process_name, processName.length > 255 ? processName.substring(processName.length - 255,  processName.length) : processName, Const.DEFAULT_ENCODING);
 
     if (this.accept.authData) {
-        blr.addString(Const.isc_dpb_specific_auth_data, this.accept.authData, this._charset);
+        blr.addString(Const.isc_dpb_specific_auth_data, this.accept.authData, Const.DEFAULT_ENCODING);
     }
 
     msg.addInt(Const.op_attach);
     msg.addInt(0);  // Database Object ID
-    msg.addString(database, this._charset);
+    msg.addString(database, Const.DEFAULT_ENCODING);
     msg.addBlr(this._blr);
 
     function cb(err, ret) {
@@ -791,27 +764,27 @@ Connection.prototype.createDatabase = function (options, callback) {
 
     blr.pos = 0;
     blr.addByte(Const.isc_dpb_version1);
-    blr.addString(Const.isc_dpb_set_db_charset, 'UTF8', this._charset);
-    blr.addString(Const.isc_dpb_lc_ctype, 'UTF8', this._charset);
-    blr.addString(Const.isc_dpb_user_name, user, this._charset);
+    blr.addString(Const.isc_dpb_set_db_charset, 'UTF8', Const.DEFAULT_ENCODING);
+    blr.addString(Const.isc_dpb_lc_ctype, 'UTF8', Const.DEFAULT_ENCODING);
+    blr.addString(Const.isc_dpb_user_name, user, Const.DEFAULT_ENCODING);
     if (this.accept.protocolVersion < Const.PROTOCOL_VERSION13) {
         if (this.accept.protocolVersion === Const.PROTOCOL_VERSION10) {
-            blr.addString(Const.isc_dpb_password, password, this._charset);
+            blr.addString(Const.isc_dpb_password, password, Const.DEFAULT_ENCODING);
         } else {
-            blr.addString(Const.isc_dpb_password_enc, crypt.crypt(password, Const.LEGACY_AUTH_SALT).substring(2), this._charset);
+            blr.addString(Const.isc_dpb_password_enc, crypt.crypt(password, Const.LEGACY_AUTH_SALT).substring(2), Const.DEFAULT_ENCODING);
         }
     }
     if (role)
-        blr.addString(Const.isc_dpb_sql_role_name, role, this._charset);
+        blr.addString(Const.isc_dpb_sql_role_name, role, Const.DEFAULT_ENCODING);
 
     blr.addBytes([Const.isc_dpb_process_id, 4]);
     blr.addInt32(process.pid);
 
     let processName  = process.title || "";
-    blr.addString(Const.isc_dpb_process_name, processName.length > 255 ? processName.substring(processName.length - 255,  processName.length) : processName, this._charset);
+    blr.addString(Const.isc_dpb_process_name, processName.length > 255 ? processName.substring(processName.length - 255,  processName.length) : processName, Const.DEFAULT_ENCODING);
 
     if (this.accept.authData) {
-        blr.addString(Const.isc_dpb_specific_auth_data, this.accept.authData, this._charset);
+        blr.addString(Const.isc_dpb_specific_auth_data, this.accept.authData, Const.DEFAULT_ENCODING);
     }
 
     blr.addNumeric(Const.isc_dpb_sql_dialect, 3);
@@ -823,7 +796,7 @@ Connection.prototype.createDatabase = function (options, callback) {
     msg.pos = 0;
     msg.addInt(Const.op_create);  // op_create
     msg.addInt(0);          // Database Object ID
-    msg.addString(database, this._charset);
+    msg.addString(database, Const.DEFAULT_ENCODING);
     msg.addBlr(blr);
 
     var self = this;
@@ -1050,7 +1023,7 @@ Connection.prototype.allocateAndPrepareStatement = function (transaction, query,
     msg.addInt(transaction.handle);
     msg.addInt(0xFFFF);
     msg.addInt(3); // dialect = 3
-    msg.addString(query, this._charset);
+    msg.addString(query, Const.DEFAULT_ENCODING);
     msg.addBlr(blr);
     msg.addInt(65535); // buffer_length
     mainCallback.lazy_count += 1;
@@ -1078,7 +1051,6 @@ Connection.prototype.prepare = function (transaction, query, plan, callback) {
 
 function describe(buff, statement) {
     var br = new BlrReader(buff);
-    var charset = statement.connection._charset;
     var parameters = null;
     var type, param;
 
@@ -1088,7 +1060,7 @@ function describe(buff, statement) {
                 statement.type = br.readInt();
                 break;
             case Const.isc_info_sql_get_plan:
-                statement.plan = br.readString(charset);
+                statement.plan = br.readString(Const.DEFAULT_ENCODING);
                 break;
             case Const.isc_info_sql_select:
                 statement.output = parameters = [];
@@ -1152,19 +1124,19 @@ function describe(buff, statement) {
                             param.nullable = Boolean(br.readInt());
                             break;
                         case Const.isc_info_sql_field:
-                            param.field = br.readString(charset);
+                            param.field = br.readString(Const.DEFAULT_ENCODING);
                             break;
                         case Const.isc_info_sql_relation:
-                            param.relation = br.readString(charset);
+                            param.relation = br.readString(Const.DEFAULT_ENCODING);
                             break;
                         case Const.isc_info_sql_owner:
-                            param.owner = br.readString(charset);
+                            param.owner = br.readString(Const.DEFAULT_ENCODING);
                             break;
                         case Const.isc_info_sql_alias:
-                            param.alias = br.readString(charset);
+                            param.alias = br.readString(Const.DEFAULT_ENCODING);
                             break;
                         case Const.isc_info_sql_relation_alias:
-                            param.relationAlias = br.readString(charset);
+                            param.relationAlias = br.readString(Const.DEFAULT_ENCODING);
                             break;
                         case Const.isc_info_truncated:
                             throw new Error('Truncated');
@@ -1261,14 +1233,11 @@ Connection.prototype.executeStatement = function(transaction, statement, params,
         op = Const.op_execute2;
     }
 
-    function PrepareParams(params, input, cnx, callback) {
+    function PrepareParams(params, input, callback) {
 
         var value, meta;
         var ret = new Array(params.length);
         var wait = params.length;
-        var charset = cnx._charset;
-        var charsetHooks = cnx._charsetHooks || {};
-        charsetHooks.text = charsetHooks.text || {};
 
         function done() {
             wait--;
@@ -1286,10 +1255,9 @@ Connection.prototype.executeStatement = function(transaction, statement, params,
                 if (Buffer.isBuffer(value))
                     b = value;
                 else if (typeof(value) === 'string')
-                    // b = Buffer.from(value, Const.DEFAULT_ENCODING);
-                    b = charsetHooks.text.encode ? charsetHooks.text.encode(value) : Buffer.from(value, charset); // perform the conversion if hook is available
+                    b = Buffer.from(value, Const.DEFAULT_ENCODING);
                 else if (!isStream)
-                    b = Buffer.from(JSON.stringify(value), charset);
+                    b = Buffer.from(JSON.stringify(value), Const.DEFAULT_ENCODING);
 
                 if (Buffer.isBuffer(b)) {
                     bufferReader(b, 1024, function(b, next) {
@@ -1339,10 +1307,7 @@ Connection.prototype.executeStatement = function(transaction, statement, params,
                     case Const.SQL_VARYING:
                     case Const.SQL_NULL:
                     case Const.SQL_TEXT:
-                        ret[i] = new Xsql.SQLParamString(null, {
-                            charset,
-                            charsetHooks
-                        });
+                        ret[i] = new Xsql.SQLParamString(null);
                         break;
                     case Const.SQL_DOUBLE:
                     case Const.SQL_FLOAT:
@@ -1404,10 +1369,7 @@ Connection.prototype.executeStatement = function(transaction, statement, params,
                                     ret[i] = new Xsql.SQLParamDouble(value);
                                 break;
                             case 'string':
-                                ret[i] = new Xsql.SQLParamString(value, {
-                                    charset,
-                                    charsetHooks
-                                });
+                                ret[i] = new Xsql.SQLParamString(value);
                                 break;
                             case 'boolean':
                                 ret[i] = new Xsql.SQLParamBool(value);
@@ -1440,7 +1402,7 @@ Connection.prototype.executeStatement = function(transaction, statement, params,
             return;
         }
 
-        PrepareParams(params, input, self, function(prms) {
+        PrepareParams(params, input, function(prms) {
             self.sendExecute(op, statement, transaction, callback, prms);
         });
 
@@ -1523,7 +1485,6 @@ Connection.prototype.sendExecute = function (op, statement, transaction, callbac
 
 function fetch_blob_async_transaction(statement, id, column, row) {
     const infoValue = { row, column, value: '' };
-    const charset = statement.connection._charset;
 
     return (transactionArg) => {
         const singleTransaction = transactionArg === undefined;
@@ -1567,7 +1528,7 @@ function fetch_blob_async_transaction(statement, id, column, row) {
                             if (ret.buffer) {
                                 const blr = new BlrReader(ret.buffer);
                                 const data = blr.readSegment();
-                                infoValue.value += data.toString(charset);
+                                infoValue.value += data.toString(Const.DEFAULT_ENCODING);
                             }
 
                             if (ret.handle !== 2) {
@@ -1805,18 +1766,18 @@ Connection.prototype.svcattach = function (options, callback, svc) {
     blr.pos = 0;
 
     blr.addBytes([Const.isc_dpb_version2, Const.isc_dpb_version2]);
-    blr.addString(Const.isc_dpb_lc_ctype, 'UTF8', this._charset);
-    blr.addString(Const.isc_dpb_user_name, user, this._charset);
-    blr.addString(Const.isc_dpb_password, password, this._charset);
+    blr.addString(Const.isc_dpb_lc_ctype, 'UTF8', Const.DEFAULT_ENCODING);
+    blr.addString(Const.isc_dpb_user_name, user, Const.DEFAULT_ENCODING);
+    blr.addString(Const.isc_dpb_password, password, Const.DEFAULT_ENCODING);
     blr.addByte(Const.isc_dpb_dummy_packet_interval);
     blr.addByte(4);
     blr.addBytes([120, 10, 0, 0]); // FROM DOT NET PROVIDER
     if (role)
-        blr.addString(Const.isc_dpb_sql_role_name, role, this._charset);
+        blr.addString(Const.isc_dpb_sql_role_name, role, Const.DEFAULT_ENCODING);
 
     msg.addInt(Const.op_service_attach);
     msg.addInt(0);
-    msg.addString(Const.DEFAULT_SVC_NAME, this._charset); // only local for moment
+    msg.addString(Const.DEFAULT_SVC_NAME, Const.DEFAULT_ENCODING); // only local for moment
     msg.addBlr(this._blr);
 
     var self = this;

@@ -17,21 +17,14 @@ const
 
 function SQLVarText() {}
 
-/**
- *
- * @param data {XdrReader}
- * @param lowerV13
- * @param opts
- * @returns {*|null}
- */
-SQLVarText.prototype.decode = function(data, lowerV13, opts) {
+SQLVarText.prototype.decode = function(data, lowerV13) {
     let ret;
     if (this.subType > 1) {
         // ToDo: with column charset
-        ret = data.readText(this.length, opts);
+        ret = data.readText(this.length, Const.DEFAULT_ENCODING);
     } else if (this.subType === 0) {
         // without charset definition
-        ret = data.readText(this.length, opts);
+        ret = data.readText(this.length, Const.DEFAULT_ENCODING);
     } else {
         ret = data.readBuffer(this.length);
     }
@@ -58,17 +51,14 @@ SQLVarNull.prototype.constructor = SQLVarNull;
 
 function SQLVarString() {}
 
-SQLVarString.prototype.decode = function(data, lowerV13, opts) {
+SQLVarString.prototype.decode = function(data, lowerV13) {
     let ret;
-    opts = opts || {};
-    opts.charsetHooks = opts.charsetHooks || {};
-    opts.charset = opts.charset || Const.DEFAULT_ENCODING;
     if (this.subType > 1) {
         // ToDo: with column charset
-        ret = data.readString(opts.charset);
+        ret = data.readString(Const.DEFAULT_ENCODING);
     } else if (this.subType === 0) {
         // without charset definition
-        ret = data.readString(opts.charset);
+        ret = data.readString(Const.DEFAULT_ENCODING);
     } else {
         ret = data.readBuffer();
     }
@@ -408,51 +398,22 @@ SQLParamDouble.prototype.calcBlr = function(blr) {
 
 //------------------------------------------------------
 
-/**
- * When we insert data, if the target column has a `varchar`
- * an instance of this class (SQLParamString) will be used to process the value
- *
- * @param value {string} The string to be written
- * @param opts {object}
- * @param opts.charset {string?}
- * @param opts.charsetHooks {text?:{decode:(v: Buffer) => string; encode:(v: string) => Buffer }}
- * @constructor
- */
-function SQLParamString(value, opts) {
-    opts = opts || {};
-    opts.charsetHooks = opts.charsetHooks || {};
-    opts.charset = opts.charset || Const.DEFAULT_ENCODING;
-    // use decode hook if available and if we've a valid string
-    if (opts.charsetHooks.decode && typeof value === 'string' && value !== '') {
-        this.value = opts.charsetHooks.decode(value);
-        this.type = 'buffer';
-        this.len = this.value.byteLength;
-    } else {
-        this.value = Buffer.from(value, opts.charset);
-        this.type = 'string';
-        this.len = this.value.byteLength;
-    }
+function SQLParamString(value) {
+    this.value = value;
 }
 
-/**
- * Writes the value of this SqlParamString to the XlrWriter
- * @param data
- */
 SQLParamString.prototype.encode = function(data) {
     if (this.value != null) {
-        data.addText(this.value);
+        data.addText(this.value, Const.DEFAULT_ENCODING);
     } else {
         data.addInt(1);
     }
 };
-/**
- * Calculates the BLR by setting the length
- * Note: CalcBLR is executed before `encode`
- * @param blr
- */
+
 SQLParamString.prototype.calcBlr = function(blr) {
-    blr.addByte(blr_text);
-    blr.addWord(this.len);
+    blr.addByte(Const.blr_text);
+    var len = this.value ? Buffer.byteLength(this.value, Const.DEFAULT_ENCODING) : 0;
+    blr.addWord(len);
 };
 
 //------------------------------------------------------

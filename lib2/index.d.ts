@@ -88,23 +88,6 @@ declare module 'node-firebird' {
         'WIN1258' |
         'WIN_1258';
 
-        export type CharsetSerialize =
-        | 'ascii'
-        | 'utf8'
-        | 'utf-8'
-        | 'utf16le'
-        | 'ucs2'
-        | 'base64'
-        | 'latin1'
-        | 'binary'
-        | 'hex';
-
-    export interface CharsetHooks {
-        text: {
-            decode: (v: Buffer) => string;
-            encode: (v: string) => Buffer;
-        }
-    }
     export interface Options {
         host?: string;
         port?: number;
@@ -116,8 +99,6 @@ declare module 'node-firebird' {
         pageSize?: number;
         retryConnectionInterval?: number;
         encoding?: SupportedCharacterSet;
-        charset?: CharsetSerialize;
-        charsetHooks?: CharsetHooks;
         blobAsText?: boolean; // only affects for blob subtype 1
     }
 

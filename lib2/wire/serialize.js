@@ -1,5 +1,4 @@
 var Long = require('long');
-const Const = require("./const");
 
 function align(n) {
     return (n + 3) & ~3;
@@ -299,15 +298,11 @@ XdrWriter.prototype.addString = function(s, encoding) {
     this.pos += alen;
 };
 
-/**
- * Takes a buffer with text content
- * @param s {Buffer}
- */
-XdrWriter.prototype.addText = function(s) {
-    var len = s.byteLength;
+XdrWriter.prototype.addText = function(s, encoding) {
+    var len = Buffer.byteLength(s, encoding);
     var alen = align(len);
     this.ensure(alen);
-    s.copy(this.buffer, this.pos, 0, len);
+    this.buffer.write(s, this.pos, len, encoding);
     this.pos += alen;
 };
 
@@ -452,26 +447,11 @@ XdrReader.prototype.readString = function(encoding) {
     return this.readText(len, encoding);
 };
 
-XdrReader.prototype.readText = function(len, optsOrCharset) {
-    var opts = {};
-    if (typeof optsOrCharset === 'string') {
-        // in case i forgot to update a call to XdrReader.readText()...
-        console.log('Warning: XdrReader.prototype.readText at: ', new Error().stack);
-        opts.charset = optsOrCharset;
-    } else {
-        opts = optsOrCharset;
-    }
-    opts = opts || {};
-    opts.charsetHooks = opts.charsetHooks || {};
-    opts.charset = opts.charset || Const.DEFAULT_ENCODING;
-
+XdrReader.prototype.readText = function(len, encoding) {
     if (len <= 0)
         return '';
 
-    var r = opts.charsetHooks.text.decode ?
-        opts.charsetHooks.text.decode(Uint8Array.prototype.slice.call(this.buffer, this.pos, this.pos+len))
-        : this.buffer.toString(opts.charset, this.pos, this.pos + len);
-    this.pos += align(len);
+    var r = this.buffer.toString(encoding, this.pos, this.pos + len);
     this.pos += align(len);
     return r;
 };
